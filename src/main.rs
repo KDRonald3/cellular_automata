@@ -10,24 +10,6 @@ struct Structure {
     structure: HashMap<i32, Vec<i32>>,
 }
 
-// impl Structure {
-//     fn get_slice(&self, generation: &i32, center: &i32) -> Result<&[i32], String> {
-//         let slice = match self.structure.get(generation) {
-//             Some(value) => { if value.len()> *center as usize +1{
-//                 Ok(value[*center as usize - 1..*center as usize +2]);
-//             }
-
-//             },
-//             None => Err(format!(
-//                 "could not get slice at {} for generation {}",
-//                 *center, *generation
-//             )),
-//         };
-
-//         return slice;
-//     }
-// }
-
 struct Rule {
     number: i32,
     rule: HashMap<Vec<i32>, i32>,
