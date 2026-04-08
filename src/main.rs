@@ -10,19 +10,23 @@ struct Structure {
     structure: HashMap<i32, Vec<i32>>,
 }
 
-impl Structure {
-    fn get_slice(&self, generation: &i32, center: &i32) -> Result<&Vec<i32>, String> {
-        let slice = match self.structure.get(generation) {
-            Some(value) => Ok(value),
-            None => Err(format!(
-                "could not get slice at {} for generation {}",
-                *center, *generation
-            )),
-        };
+// impl Structure {
+//     fn get_slice(&self, generation: &i32, center: &i32) -> Result<&[i32], String> {
+//         let slice = match self.structure.get(generation) {
+//             Some(value) => { if value.len()> *center as usize +1{
+//                 Ok(value[*center as usize - 1..*center as usize +2]);
+//             }
 
-        return slice;
-    }
-}
+//             },
+//             None => Err(format!(
+//                 "could not get slice at {} for generation {}",
+//                 *center, *generation
+//             )),
+//         };
+
+//         return slice;
+//     }
+// }
 
 struct Rule {
     number: i32,
@@ -81,9 +85,9 @@ impl CellularAutomaton {
                 (ZERO..number_of_threads as i32)
                     .into_par_iter()
                     .map(|i| {
-                        let slice: &Vec<i32> = match structure.get_slice(&generation, &i) {
-                            Ok(slice) => slice,
-                            Err(_) => &vec![1, 1, 1],
+                        let slice: &[i32] = match structure.structure.get(&generation) {
+                            Some(vec_slice) => &vec_slice[i as usize..i as usize + 3],
+                            None => &vec![1, 1, 1][0..3],
                         };
 
                         match self.rule.rule.get(slice) {
@@ -93,6 +97,11 @@ impl CellularAutomaton {
                     })
                     .collect(),
             );
+
+            structure.structure.entry(generation + 1).and_modify(|f| {
+                f.insert(ZERO as usize, ONE);
+                f.push(ONE);
+            });
         }
 
         self.size = number_of_threads as i32;
@@ -109,9 +118,6 @@ fn main() {
     };
     let mut rule_number_string: String = String::new();
     let mut final_generation_string: String = String::new();
-    let final_generation: i32;
-
-    println!("Hello, world!");
 
     println!("Enter initial state");
     stdin()
@@ -129,37 +135,35 @@ fn main() {
         };
     }
 
+    initial_condition.size = initial_state_vec.len();
+    initial_condition.state = initial_state_vec;
+
     println!("Enter rule number: ");
     stdin()
         .read_line(&mut rule_number_string)
         .expect("could not read rule number");
+
     let rule_number = rule_number_string
         .split("\r\n")
         .collect::<String>()
         .parse::<i32>()
         .unwrap();
+
     let mut rule = Rule {
         number: rule_number,
         rule: HashMap::new(),
     };
+    rule.create_rule();
 
     println!("Enter final generation: ");
     stdin()
         .read_line(&mut final_generation_string)
         .expect("failed to read generation");
-    final_generation = final_generation_string
+    let final_generation: i32 = final_generation_string
         .split("\r\n")
         .collect::<String>()
         .parse::<i32>()
         .unwrap();
-
-    rule.create_rule();
-
-    initial_condition.size = initial_state_vec.len();
-    initial_condition.state = initial_state_vec;
-
-    println!("rule is {:?}", rule.rule);
-    println!("generation 1 {:?}", initial_condition.state);
 
     let mut cellular_automaton: CellularAutomaton = CellularAutomaton {
         rule,
@@ -175,10 +179,3 @@ fn main() {
         println!("{:?}", cellular_automaton.structure.structure.get(&i))
     }
 }
-
-// fn main(){
-//     let mut input = String::new();
-//     println!("enter something");
-//     stdin().read_line(& mut input).expect("did not read input");
-//     println!("length of string is: {}", input.split("\r\n").collect::<String>().len());
-// }
