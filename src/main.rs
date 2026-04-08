@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::io::stdin;
 // use std::process::Output;
 
-const ONE: i32 = 1;
 const ZERO: i32 = 0;
 
 struct Structure {
@@ -55,7 +54,7 @@ impl Rule {
         let rule_number_base_2 = self.base_10_to_2(&self.number, 8);
         for i in ZERO..8 {
             self.rule
-                .insert(self.base_10_to_2(&i, 3), rule_number_base_2[i as usize]);
+                .insert(self.base_10_to_2(&i, 3), rule_number_base_2[7-i as usize]);
         }
     }
 }
@@ -92,8 +91,8 @@ impl CellularAutomaton {
         let mut structure = Structure {
             structure: HashMap::new(),
         };
-        self.initial_condition.state.insert(ZERO as usize, ONE);
-        self.initial_condition.state.push(ONE);
+        self.initial_condition.state.insert(ZERO as usize, ZERO);
+        self.initial_condition.state.push(ZERO);
         structure.structure.insert(ZERO, self.initial_condition.state.clone());
 
         for generation in ZERO..self.initial_condition.final_generation {
@@ -115,9 +114,9 @@ impl CellularAutomaton {
                     .collect(),
             );
 
-            structure.structure.entry(generation + 1).and_modify(|f| {
-                f.insert(ZERO as usize, ONE);
-                f.push(ONE);
+            structure.structure.entry(generation + 1).and_modify(|state| {
+                state.insert(ZERO as usize, ZERO);
+                state.push(ZERO);
             });
         }
 
@@ -146,7 +145,6 @@ fn main() {
         match state.to_digit(10) {
             Some(n) => {
                 initial_state_vec.push(n as i32);
-                println!("{}", n);
             }
             None => continue,
         };
@@ -192,6 +190,7 @@ fn main() {
     };
 
     cellular_automaton.run();
+    println!("{:?}",cellular_automaton.rule.rule);
     for i in 0..cellular_automaton.initial_condition.final_generation {
         println!("{:?}", cellular_automaton.structure.structure.get(&i))
     }
