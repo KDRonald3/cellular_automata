@@ -1,1 +1,4 @@
 /target
+/runs/*
+!/runs/index.html
+!/runs/manifest.tsv
