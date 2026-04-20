@@ -1,0 +1,8 @@
+id	rule	width	generations	boundary	status	progress	timestamp	filename
+1	30	401	200	Zero-padded	Done	200	2026-04-19 19:22:29	rule030_w401_g200_zp_20260419_192229_job1.html
+1	30	401	200	Zero-padded	Done	200	2026-04-19 19:22:33	rule030_w401_g200_zp_20260419_192233_job1.html
+1	30	401	200	Zero-padded	Done	200	2026-04-19 19:22:34	rule030_w401_g200_zp_20260419_192234_job1.html
+1	30	401	200	Zero-padded	Done	200	2026-04-19 19:22:34	rule030_w401_g200_zp_20260419_192234_job1.html
+1	30	401	200	Zero-padded	Done	200	2026-04-19 19:22:35	rule030_w401_g200_zp_20260419_192235_job1.html
+1	30	401	200	Zero-padded	Done	200	2026-04-19 19:22:35	rule030_w401_g200_zp_20260419_192235_job1.html
+3	30	401	220	Wrap-around	Done	220	2026-04-19 19:23:47	rule030_w401_g220_wr_20260419_192347_job3.html
