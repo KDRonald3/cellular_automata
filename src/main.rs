@@ -813,7 +813,18 @@ impl App {
                 .into()
         });
 
-        column![info_col, body]
+        // Outer white container covers the full viewport on every frame,
+        // preventing the one-frame black flash that occurs on window expansion
+        // while the inner `responsive` closure hasn't fired yet.
+        let canvas_area = container(body)
+            .width(Fill)
+            .height(Fill)
+            .style(|_t| container::Style {
+                background: Some(iced::Background::Color(Color::WHITE)),
+                ..container::Style::default()
+            });
+
+        column![info_col, canvas_area]
             .spacing(6)
             .width(Fill)
             .height(Fill)

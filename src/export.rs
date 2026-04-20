@@ -159,6 +159,7 @@ fn render_run_html(input: &ExportInput, exported_at: &str) -> String {
           const meta = JSON.parse(document.getElementById('meta').textContent);\n\
           if (!meta || meta.w === 0 || meta.h === 0) return;\n\
           const host = document.getElementById('tiles');\n\
+          let firstTile = true;\n\
           for (const tile of meta.tiles || []) {\n\
             const b64 = (document.getElementById(tile.id)?.textContent || '').trim();\n\
             if (!b64) continue;\n\
@@ -171,8 +172,9 @@ fn render_run_html(input: &ExportInput, exported_at: &str) -> String {
             cv.style.imageRendering = 'pixelated';\n\
             cv.style.imageRendering = 'crisp-edges';\n\
             cv.style.display = 'block';\n\
-            cv.style.marginTop = '12px';\n\
-            cv.style.border = '1px solid #ccc';\n\
+            cv.style.marginTop = firstTile ? '12px' : '0';\n\
+            cv.style.border = 'none';\n\
+            firstTile = false;\n\
             const ctx = cv.getContext('2d');\n\
             const img = ctx.createImageData(meta.w, tileH);\n\
             for (let y = 0; y < tileH; y++) {\n\
@@ -319,7 +321,12 @@ fn regenerate_index(dir: &Path) -> io::Result<()> {
     let entries = read_manifest(dir)?;
 
     let mut rows_html = String::new();
+    let mut visible_count = 0usize;
     for e in entries.iter().rev() {
+        if !dir.join(&e.filename).exists() {
+            continue;
+        }
+        visible_count += 1;
         rows_html.push_str(&format!(
             "<tr data-filename=\"{}\">\
                 <td>{}</td>\
@@ -329,7 +336,7 @@ fn regenerate_index(dir: &Path) -> io::Result<()> {
                 <td>{}</td>\
                 <td>{}</td>\
                 <td>{}</td>\
-                <td><a href=\"{}\">open</a> | <button data-move>Move</button></td>\
+                <td><a href=\"{}\">open</a></td>\
              </tr>\n",
             html_escape(&e.filename),
             html_escape(&e.id),
@@ -344,7 +351,7 @@ fn regenerate_index(dir: &Path) -> io::Result<()> {
         ));
     }
 
-    let count = entries.len();
+    let count = visible_count;
     let html = format!(
         "<!doctype html><html lang=\"en\"><head>\n\
          <meta charset=\"utf-8\">\n\
@@ -368,12 +375,20 @@ fn regenerate_index(dir: &Path) -> io::Result<()> {
          <input id=\"q\" placeholder=\"Filter (e.g. rule 30 running)\" autofocus>\n\
          {}\n\
          <script>\n\
-         let srcDirHandle = null;\n\
-         let dstDirHandle = null;\n\
-\n\
          (function(){{\n\
            const q = document.getElementById('q');\n\
-           const rows = Array.from(document.querySelectorAll('#runs tbody tr'));\n\
+           let rows = Array.from(document.querySelectorAll('#runs tbody tr'));\n\
+           async function filterExisting() {{\n\
+             await Promise.all(rows.map(async (tr) => {{\n\
+               const fname = tr.dataset.filename;\n\
+               if (!fname) {{ tr.remove(); return; }}\n\
+               try {{\n\
+                 const res = await fetch(fname, {{ method: 'HEAD' }});\n\
+                 if (!res.ok) tr.remove();\n\
+               }} catch {{ /* file:// protocol — keep row */ }}\n\
+             }}));\n\
+             rows = Array.from(document.querySelectorAll('#runs tbody tr'));\n\
+           }}\n\
            function apply() {{\n\
              const terms = q.value.toLowerCase().split(/\\s+/).filter(Boolean);\n\
              for (const r of rows) {{\n\
@@ -382,47 +397,8 @@ fn regenerate_index(dir: &Path) -> io::Result<()> {
              }}\n\
            }}\n\
            q.addEventListener('input', apply);\n\
+           filterExisting();\n\
          }})();\n\
-\n\
-         async function ensureDirs() {{\n\
-           if (!window.showDirectoryPicker) {{\n\
-             alert('Move requires a Chromium browser with File System Access API.');\n\
-             throw new Error('no FSA');\n\
-           }}\n\
-           if (!srcDirHandle) {{\n\
-             srcDirHandle = await window.showDirectoryPicker({{mode: 'readwrite'}});\n\
-           }}\n\
-           if (!dstDirHandle) {{\n\
-             dstDirHandle = await window.showDirectoryPicker({{mode: 'readwrite'}});\n\
-           }}\n\
-         }}\n\
-\n\
-         async function moveFile(btn) {{\n\
-           try {{\n\
-             await ensureDirs();\n\
-             const tr = btn.closest('tr');\n\
-             const fname = tr?.dataset?.filename;\n\
-             if (!fname) {{ alert('Missing filename'); return; }}\n\
-             const srcFile = await srcDirHandle.getFileHandle(fname);\n\
-             const file = await srcFile.getFile();\n\
-             const dstFile = await dstDirHandle.getFileHandle(fname, {{create: true}});\n\
-             const writable = await dstFile.createWritable();\n\
-             await writable.write(await file.arrayBuffer());\n\
-             await writable.close();\n\
-             try {{ await srcDirHandle.removeEntry(fname); }} catch(e) {{ console.warn('delete failed', e); }}\n\
-             tr.remove();\n\
-           }} catch (e) {{\n\
-             console.error(e);\n\
-             alert('Move failed: ' + e);\n\
-           }}\n\
-         }}\n\
-\n\
-         document.addEventListener('click', (ev) => {{\n\
-           const target = ev.target;\n\
-           if (target instanceof HTMLButtonElement && target.dataset.move !== undefined) {{\n\
-             moveFile(target);\n\
-           }}\n\
-         }});\n\
          </script>\n\
          </body></html>\n",
         count,
