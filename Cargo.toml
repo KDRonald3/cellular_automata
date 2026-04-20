@@ -4,6 +4,4 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.13", features = ["canvas", "tokio", "lazy"] }
-base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
+rayon ="1"
