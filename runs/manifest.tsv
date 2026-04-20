@@ -6,3 +6,4 @@ id	rule	width	generations	boundary	status	progress	timestamp	filename
 1	30	401	200	Zero-padded	Done	200	2026-04-19 19:22:35	rule030_w401_g200_zp_20260419_192235_job1.html
 1	30	401	200	Zero-padded	Done	200	2026-04-19 19:22:35	rule030_w401_g200_zp_20260419_192235_job1.html
 3	30	401	220	Wrap-around	Done	220	2026-04-19 19:23:47	rule030_w401_g220_wr_20260419_192347_job3.html
+1	30	1000	2000000	Wrap-around	Done	2000000	2026-04-20 09:07:11	rule030_w1000_g2000000_wr_20260420_090711_job1.html

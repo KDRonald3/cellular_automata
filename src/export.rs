@@ -15,7 +15,8 @@ const MAX_EXPORT_HEIGHT: usize = 32_000; // per-canvas height cap
 
 const MANIFEST_FILE: &str = "manifest.tsv";
 const INDEX_FILE: &str = "index.html";
-const DATA_DIR: &str = r"C:\Users\Ronald Kouatchoua\code\Research\Cellular Automata\Data";
+// Relative path so exports work on any OS and checkout location.
+const DATA_DIR: &str = "runs";
 
 pub struct ExportInput<'a> {
     pub job_id: u64,
@@ -468,6 +469,7 @@ fn html_escape(s: &str) -> String {
 }
 
 fn runs_dir() -> io::Result<PathBuf> {
-    // Save exports into the user-requested data folder.
-    Ok(PathBuf::from(DATA_DIR))
+    // Save exports into a repo-local `runs/` folder so the app works
+    // cross-platform and regardless of absolute install path.
+    Ok(std::env::current_dir()?.join(DATA_DIR))
 }
