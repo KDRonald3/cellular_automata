@@ -11,8 +11,55 @@ impl BoundaryMode {
 impl std::fmt::Display for BoundaryMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BoundaryMode::ZeroPadded => write!(f, "Zero-padded"),
+            BoundaryMode::ZeroPadded => write!(f, "Padded"),
             BoundaryMode::Wrap => write!(f, "Wrap-around"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaddingAlign {
+    After,
+    Before,
+    Center,
+}
+
+impl PaddingAlign {
+    pub const ALL: [PaddingAlign; 3] = [PaddingAlign::After, PaddingAlign::Before, PaddingAlign::Center];
+}
+
+impl std::fmt::Display for PaddingAlign {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PaddingAlign::After => write!(f, "Padding after"),
+            PaddingAlign::Before => write!(f, "Padding before"),
+            PaddingAlign::Center => write!(f, "Centered"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaddingFill {
+    Zero,
+    One,
+}
+
+impl PaddingFill {
+    pub const ALL: [PaddingFill; 2] = [PaddingFill::Zero, PaddingFill::One];
+
+    pub fn value(self) -> u8 {
+        match self {
+            PaddingFill::Zero => 0,
+            PaddingFill::One => 1,
+        }
+    }
+}
+
+impl std::fmt::Display for PaddingFill {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PaddingFill::Zero => write!(f, "Fill 0s"),
+            PaddingFill::One => write!(f, "Fill 1s"),
         }
     }
 }
@@ -86,13 +133,13 @@ impl CellularAutomaton {
             return;
         }
 
-        let row0 = make_initial_row(width, &self.initial);
+        let row0 = self.initial.clone();
         let total_rows = self.generations + 1;
         let mut rows: Vec<Vec<u8>> = Vec::with_capacity(total_rows);
         rows.push(row0);
 
         for g in 0..self.generations {
-            let next = step_row(&self.rule, &rows[g], self.boundary);
+            let next = step_row(&self.rule, &rows[g], self.boundary, 0);
             rows.push(next);
         }
 
@@ -100,13 +147,17 @@ impl CellularAutomaton {
     }
 }
 
-pub fn make_initial_row(width: usize, seed: &[u8]) -> Vec<u8> {
-    let mut row = vec![0u8; width];
+pub fn make_initial_row(width: usize, seed: &[u8], align: PaddingAlign, fill: u8) -> Vec<u8> {
+    let mut row = vec![fill & 1; width];
     if width == 0 || seed.is_empty() {
         return row;
     }
     let len = seed.len().min(width);
-    let start = (width.saturating_sub(len)) / 2;
+    let start = match align {
+        PaddingAlign::Before => width - len,
+        PaddingAlign::After => 0,
+        PaddingAlign::Center => (width.saturating_sub(len)) / 2,
+    };
     for (i, v) in seed.iter().take(len).enumerate() {
         row[start + i] = if *v != 0 { 1 } else { 0 };
     }
@@ -120,17 +171,18 @@ pub fn make_initial_row(width: usize, seed: &[u8]) -> Vec<u8> {
 /// expensive for long runs: with width ~1000 and millions of generations, the
 /// thread-dispatch overhead per row dwarfed the actual compute and prevented
 /// any other thread (including the UI) from getting CPU time.
-pub fn step_row_into(rule: &Rule, prev: &[u8], next: &mut [u8], boundary: BoundaryMode) {
+pub fn step_row_into(rule: &Rule, prev: &[u8], next: &mut [u8], boundary: BoundaryMode, boundary_fill: u8) {
     let width = prev.len();
     debug_assert_eq!(width, next.len());
     if width == 0 {
         return;
     }
+    let fill = boundary_fill & 1;
     match boundary {
         BoundaryMode::ZeroPadded => {
             for i in 0..width {
-                let l = if i == 0 { 0 } else { prev[i - 1] };
-                let r = if i + 1 >= width { 0 } else { prev[i + 1] };
+                let l = if i == 0 { fill } else { prev[i - 1] };
+                let r = if i + 1 >= width { fill } else { prev[i + 1] };
                 next[i] = rule.apply(l, prev[i], r);
             }
         }
@@ -149,9 +201,9 @@ pub fn step_row_into(rule: &Rule, prev: &[u8], next: &mut [u8], boundary: Bounda
     }
 }
 
-pub fn step_row(rule: &Rule, prev: &[u8], boundary: BoundaryMode) -> Vec<u8> {
+pub fn step_row(rule: &Rule, prev: &[u8], boundary: BoundaryMode, boundary_fill: u8) -> Vec<u8> {
     let mut next = vec![0u8; prev.len()];
-    step_row_into(rule, prev, &mut next, boundary);
+    step_row_into(rule, prev, &mut next, boundary, boundary_fill);
     next
 }
 
@@ -196,7 +248,7 @@ mod tests {
 
         let start = std::time::Instant::now();
         for _ in 0..generations {
-            step_row_into(&rule, &prev, &mut next, BoundaryMode::Wrap);
+            step_row_into(&rule, &prev, &mut next, BoundaryMode::Wrap, 0);
             flat.extend_from_slice(&next);
             std::mem::swap(&mut prev, &mut next);
         }

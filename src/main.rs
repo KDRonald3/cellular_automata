@@ -15,7 +15,7 @@ use iced::widget::{
 };
 use iced::{Color, Element, Fill, Length, Rectangle, Renderer, Size, Theme};
 
-use sim::{make_initial_row, step_row_into, BoundaryMode, Rule};
+use sim::{make_initial_row, step_row_into, BoundaryMode, PaddingAlign, PaddingFill, Rule};
 
 const DEFAULT_INITIAL: &str = "0000000000000000000001000000000000000000000";
 const DEFAULT_RULE: u16 = 30;
@@ -62,6 +62,7 @@ struct JobParams {
     generations: usize,
     initial: Vec<u8>,
     boundary: BoundaryMode,
+    padding_fill: PaddingFill,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,6 +125,8 @@ enum Message {
     WidthChanged(String),
     CellSizeChanged(String),
     BoundaryChanged(BoundaryMode),
+    PaddingAlignChanged(PaddingAlign),
+    PaddingFillChanged(PaddingFill),
     Run,
     SelectJob(JobId),
     CancelJob(JobId),
@@ -139,6 +142,8 @@ struct App {
     width_text: String,
     cell_size_text: String,
     boundary: BoundaryMode,
+    padding_align: PaddingAlign,
+    padding_fill: PaddingFill,
     next_job_id: JobId,
     jobs: Vec<Job>,
     selected: Option<JobId>,
@@ -159,6 +164,8 @@ impl App {
                 width_text: DEFAULT_WIDTH.to_string(),
                 cell_size_text: format!("{}", DEFAULT_CELL_SIZE as i32),
                 boundary: BoundaryMode::ZeroPadded,
+                padding_align: PaddingAlign::Center,
+                padding_fill: PaddingFill::Zero,
                 next_job_id: 1,
                 jobs: Vec::new(),
                 selected: None,
@@ -176,6 +183,8 @@ impl App {
             Message::WidthChanged(s) => self.width_text = s,
             Message::CellSizeChanged(s) => self.cell_size_text = s,
             Message::BoundaryChanged(b) => self.boundary = b,
+            Message::PaddingAlignChanged(a) => self.padding_align = a,
+            Message::PaddingFillChanged(f) => self.padding_fill = f,
             Message::Run => {
                 self.error = None;
                 match self.parse_params() {
@@ -360,7 +369,7 @@ impl App {
             .chars()
             .filter_map(|c| c.to_digit(10).map(|d| if d == 0 { 0u8 } else { 1u8 }))
             .collect();
-        let initial = make_initial_row(width, &parsed);
+        let initial = make_initial_row(width, &parsed, self.padding_align, self.padding_fill.value());
 
         Ok(JobParams {
             rule_number: rule_n as u8,
@@ -368,6 +377,7 @@ impl App {
             generations,
             initial,
             boundary: self.boundary,
+            padding_fill: self.padding_fill,
         })
     }
 
@@ -468,6 +478,20 @@ impl App {
         )
         .width(Length::Fixed(160.0));
 
+        let padding_pick = pick_list(
+            &PaddingAlign::ALL[..],
+            Some(self.padding_align),
+            Message::PaddingAlignChanged,
+        )
+        .width(Length::Fixed(160.0));
+
+        let fill_pick = pick_list(
+            &PaddingFill::ALL[..],
+            Some(self.padding_fill),
+            Message::PaddingFillChanged,
+        )
+        .width(Length::Fixed(110.0));
+
         let run_button = button(text("Run")).on_press(Message::Run).padding(8);
 
         row![
@@ -477,6 +501,8 @@ impl App {
             labeled("Width", width_input),
             labeled("Cell px", cell_size_input),
             labeled("Boundary", boundary_pick),
+            labeled("Padding", padding_pick),
+            labeled("Fill", fill_pick),
             run_button,
         ]
         .spacing(12)
@@ -935,7 +961,7 @@ fn spawn_worker(
                 cancelled = true;
                 break;
             }
-            step_row_into(&rule, &scratch_prev, &mut scratch_next, params.boundary);
+            step_row_into(&rule, &scratch_prev, &mut scratch_next, params.boundary, params.padding_fill.value());
             flat.extend_from_slice(&scratch_next);
             std::mem::swap(&mut scratch_prev, &mut scratch_next);
 

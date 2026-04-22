@@ -292,10 +292,7 @@ fn read_manifest(dir: &Path) -> io::Result<Vec<ManifestEntry>> {
     let mut entries = Vec::new();
     for (i, line) in reader.lines().enumerate() {
         let line = line?;
-        if i == 0 {
-            continue;
-        }
-        if line.trim().is_empty() {
+        if i == 0 || line.trim().is_empty() {
             continue;
         }
         let parts: Vec<&str> = line.split('\t').collect();
@@ -317,26 +314,115 @@ fn read_manifest(dir: &Path) -> io::Result<Vec<ManifestEntry>> {
     Ok(entries)
 }
 
+// Static pieces that need no Rust-level interpolation are kept as concat!
+// constants so their JS braces/backticks don't need escaping in format!.
+const INDEX_HEAD: &str = concat!(
+    "<!doctype html><html lang=\"en\"><head>\n",
+    "<meta charset=\"utf-8\">\n",
+    "<title>Cellular Automata runs</title>\n",
+    "<style>\n",
+    "body { font-family: system-ui, sans-serif; margin: 20px; background: #fafafa; color: #222; }\n",
+    "h1 { font-size: 20px; margin: 0 0 10px 0; }\n",
+    ".meta { color: #666; font-size: 13px; margin-bottom: 12px; }\n",
+    "#q { width: 100%; max-width: 520px; padding: 8px 10px; font-size: 14px; box-sizing: border-box; }\n",
+    "table { width: 100%; border-collapse: collapse; margin-top: 12px; background: white; }\n",
+    "th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eee; font-size: 13px; }\n",
+    "th { background: #f0f0f0; position: sticky; top: 0; }\n",
+    "tr:hover td { background: #fafaff; }\n",
+    "a { color: #06c; text-decoration: none; }\n",
+    "a:hover { text-decoration: underline; }\n",
+    ".empty { color: #888; padding: 20px 0; }\n",
+    "</style>\n",
+    "</head><body>\n",
+    "<h1>Cellular Automata runs</h1>\n"
+);
+
+// JS that tries to load manifest.tsv on every page load. If fetch succeeds
+// (HTTP server), the baked rows are replaced with live TSV data. If fetch
+// fails (file:// protocol), the baked rows already in the tbody are used as
+// the fallback — so the page works correctly in both cases.
+const INDEX_SCRIPT: &str = concat!(
+    "<script>\n",
+    "(function(){\n",
+    "  function esc(s){\n",
+    "    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')",
+    ".replace(/>/g,'&gt;').replace(/\"/g,'&quot;');\n",
+    "  }\n",
+    "  const q      = document.getElementById('q');\n",
+    "  const tbody  = document.getElementById('runs-body');\n",
+    "  const metaEl = document.getElementById('run-meta');\n",
+    "  const tableEl= document.getElementById('runs');\n",
+    "  const emptyEl= document.getElementById('empty-msg');\n",
+    "  async function tryLoadTsv(){\n",
+    "    const res = await fetch('manifest.tsv');\n",
+    "    if (!res.ok) throw new Error();\n",
+    "    const text = await res.text();\n",
+    "    const lines = text.trim().split('\\n');\n",
+    "    const entries = [];\n",
+    "    for (let i = 1; i < lines.length; i++) {\n",
+    "      const p = lines[i].split('\\t');\n",
+    "      if (p.length < 9) continue;\n",
+    "      entries.push({id:p[0],rule:p[1],width:p[2],generations:p[3],\n",
+    "                    boundary:p[4],status:p[5],progress:p[6],timestamp:p[7],filename:p[8]});\n",
+    "    }\n",
+    "    entries.reverse();\n",
+    "    tbody.innerHTML = '';\n",
+    "    for (const e of entries) {\n",
+    "      const tr = document.createElement('tr');\n",
+    "      tr.dataset.filename = e.filename;\n",
+    "      tr.innerHTML =\n",
+    "        `<td>${esc(e.id)}</td><td>${esc(e.rule)}</td><td>${esc(e.width)}</td>`\n",
+    "        +`<td>${esc(e.progress)}/${esc(e.generations)}</td><td>${esc(e.boundary)}</td>`\n",
+    "        +`<td>${esc(e.status)}</td><td>${esc(e.timestamp)}</td>`\n",
+    "        +`<td><a href=\"${esc(e.filename)}\">open</a></td>`;\n",
+    "      tbody.appendChild(tr);\n",
+    "    }\n",
+    "  }\n",
+    "  async function run(){\n",
+    "    try { await tryLoadTsv(); } catch {}\n",
+    "    await Promise.all(Array.from(tbody.querySelectorAll('tr')).map(async tr => {\n",
+    "      const fname = tr.dataset.filename;\n",
+    "      if (!fname) { tr.remove(); return; }\n",
+    "      try {\n",
+    "        const res = await fetch(fname, {method:'HEAD'});\n",
+    "        if (!res.ok) tr.remove();\n",
+    "      } catch {}\n",
+    "    }));\n",
+    "    const rows = Array.from(tbody.querySelectorAll('tr'));\n",
+    "    const count = rows.length;\n",
+    "    metaEl.textContent = count\n",
+    "      + ' saved run(s). Type to filter by any column (rule, width, status, ...).';\n",
+    "    tableEl.style.display = count === 0 ? 'none' : '';\n",
+    "    emptyEl.style.display = count === 0 ? '' : 'none';\n",
+    "    function apply(){\n",
+    "      const terms = q.value.toLowerCase().split(/\\s+/).filter(Boolean);\n",
+    "      for (const r of rows) {\n",
+    "        const t = r.textContent.toLowerCase();\n",
+    "        r.style.display = terms.every(w => t.includes(w)) ? '' : 'none';\n",
+    "      }\n",
+    "    }\n",
+    "    q.addEventListener('input', apply);\n",
+    "    apply();\n",
+    "  }\n",
+    "  run();\n",
+    "})();\n",
+    "</script>\n",
+    "</body></html>\n"
+);
+
 fn regenerate_index(dir: &Path) -> io::Result<()> {
     let entries = read_manifest(dir)?;
 
     let mut rows_html = String::new();
-    let mut visible_count = 0usize;
     for e in entries.iter().rev() {
         if !dir.join(&e.filename).exists() {
             continue;
         }
-        visible_count += 1;
         rows_html.push_str(&format!(
             "<tr data-filename=\"{}\">\
-                <td>{}</td>\
-                <td>{}</td>\
-                <td>{}</td>\
-                <td>{}/{}</td>\
-                <td>{}</td>\
-                <td>{}</td>\
-                <td>{}</td>\
-                <td><a href=\"{}\">open</a></td>\
+             <td>{}</td><td>{}</td><td>{}</td>\
+             <td>{}/{}</td><td>{}</td><td>{}</td>\
+             <td>{}</td><td><a href=\"{}\">open</a></td>\
              </tr>\n",
             html_escape(&e.filename),
             html_escape(&e.id),
@@ -351,80 +437,22 @@ fn regenerate_index(dir: &Path) -> io::Result<()> {
         ));
     }
 
-    let count = visible_count;
-    let html = format!(
-        "<!doctype html><html lang=\"en\"><head>\n\
-         <meta charset=\"utf-8\">\n\
-         <title>Cellular Automata runs</title>\n\
-         <style>\n\
-         body {{ font-family: system-ui, sans-serif; margin: 20px; background: #fafafa; color: #222; }}\n\
-         h1 {{ font-size: 20px; margin: 0 0 10px 0; }}\n\
-         .meta {{ color: #666; font-size: 13px; margin-bottom: 12px; }}\n\
-         #q {{ width: 100%; max-width: 520px; padding: 8px 10px; font-size: 14px; box-sizing: border-box; }}\n\
-         table {{ width: 100%; border-collapse: collapse; margin-top: 12px; background: white; }}\n\
-         th, td {{ text-align: left; padding: 6px 10px; border-bottom: 1px solid #eee; font-size: 13px; }}\n\
-         th {{ background: #f0f0f0; position: sticky; top: 0; }}\n\
-         tr:hover td {{ background: #fafaff; }}\n\
-         a {{ color: #06c; text-decoration: none; }}\n\
-         a:hover {{ text-decoration: underline; }}\n\
-         .empty {{ color: #888; padding: 20px 0; }}\n\
-         </style>\n\
-         </head><body>\n\
-         <h1>Cellular Automata runs</h1>\n\
-         <div class=\"meta\">{} saved run(s). Type to filter by any column (rule, width, status, ...).</div>\n\
+    // The table is hidden initially; JS reveals it after the TSV check.
+    let body = format!(
+        "<div id=\"run-meta\" class=\"meta\">Loading...</div>\n\
          <input id=\"q\" placeholder=\"Filter (e.g. rule 30 running)\" autofocus>\n\
-         {}\n\
-         <script>\n\
-         (function(){{\n\
-           const q = document.getElementById('q');\n\
-           let rows = Array.from(document.querySelectorAll('#runs tbody tr'));\n\
-           async function filterExisting() {{\n\
-             await Promise.all(rows.map(async (tr) => {{\n\
-               const fname = tr.dataset.filename;\n\
-               if (!fname) {{ tr.remove(); return; }}\n\
-               try {{\n\
-                 const res = await fetch(fname, {{ method: 'HEAD' }});\n\
-                 if (!res.ok) tr.remove();\n\
-               }} catch {{ /* file:// protocol — keep row */ }}\n\
-             }}));\n\
-             rows = Array.from(document.querySelectorAll('#runs tbody tr'));\n\
-           }}\n\
-           function apply() {{\n\
-             const terms = q.value.toLowerCase().split(/\\s+/).filter(Boolean);\n\
-             for (const r of rows) {{\n\
-               const t = r.textContent.toLowerCase();\n\
-               r.style.display = terms.every(w => t.includes(w)) ? '' : 'none';\n\
-             }}\n\
-           }}\n\
-           q.addEventListener('input', apply);\n\
-           filterExisting();\n\
-         }})();\n\
-         </script>\n\
-         </body></html>\n",
-        count,
-        if entries.is_empty() {
-            "<div class=\"empty\">No runs exported yet.</div>".to_string()
-        } else {
-            format!(
-                "<table id=\"runs\">\n\
-                 <thead><tr>\
-                   <th>ID</th>\
-                   <th>Rule</th>\
-                   <th>Width</th>\
-                   <th>Progress</th>\
-                   <th>Boundary</th>\
-                   <th>Status</th>\
-                   <th>Exported</th>\
-                   <th></th>\
-                 </tr></thead>\n\
-                 <tbody>\n{}\
-                 </tbody>\n\
-                 </table>",
-                rows_html
-            )
-        }
+         <div id=\"empty-msg\" class=\"empty\" style=\"display:none\">No runs exported yet.</div>\n\
+         <table id=\"runs\" style=\"display:none\">\n\
+         <thead><tr><th>ID</th><th>Rule</th><th>Width</th><th>Progress</th>\
+         <th>Boundary</th><th>Status</th><th>Exported</th><th></th></tr></thead>\n\
+         <tbody id=\"runs-body\">\n\
+         {}\
+         </tbody>\n\
+         </table>\n",
+        rows_html
     );
 
+    let html = format!("{}{}{}", INDEX_HEAD, body, INDEX_SCRIPT);
     fs::write(dir.join(INDEX_FILE), html)?;
     Ok(())
 }

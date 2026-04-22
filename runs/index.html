@@ -16,38 +16,77 @@ a:hover { text-decoration: underline; }
 </style>
 </head><body>
 <h1>Cellular Automata runs</h1>
-<div class="meta">1 saved run(s). Type to filter by any column (rule, width, status, ...).</div>
+<div id="run-meta" class="meta">Loading...</div>
 <input id="q" placeholder="Filter (e.g. rule 30 running)" autofocus>
-<table id="runs">
+<div id="empty-msg" class="empty" style="display:none">No runs exported yet.</div>
+<table id="runs" style="display:none">
 <thead><tr><th>ID</th><th>Rule</th><th>Width</th><th>Progress</th><th>Boundary</th><th>Status</th><th>Exported</th><th></th></tr></thead>
-<tbody>
-<tr data-filename="rule003_w1000_g2000000_zp_20260420_115158_job1.html"><td>1</td><td>3</td><td>1000</td><td>2000000/2000000</td><td>Zero-padded</td><td>Done</td><td>2026-04-20 11:51:58</td><td><a href="rule003_w1000_g2000000_zp_20260420_115158_job1.html">open</a></td></tr>
+<tbody id="runs-body">
+<tr data-filename="rule001_w401_g200_zp_20260422_092239_job1.html"><td>1</td><td>1</td><td>401</td><td>200/200</td><td>Padded</td><td>Done</td><td>2026-04-22 09:22:39</td><td><a href="rule001_w401_g200_zp_20260422_092239_job1.html">open</a></td></tr>
 </tbody>
 </table>
 <script>
 (function(){
-const q = document.getElementById('q');
-let rows = Array.from(document.querySelectorAll('#runs tbody tr'));
-async function filterExisting() {
-await Promise.all(rows.map(async (tr) => {
-const fname = tr.dataset.filename;
-if (!fname) { tr.remove(); return; }
-try {
-const res = await fetch(fname, { method: 'HEAD' });
-if (!res.ok) tr.remove();
-} catch { /* file:// protocol — keep row */ }
-}));
-rows = Array.from(document.querySelectorAll('#runs tbody tr'));
-}
-function apply() {
-const terms = q.value.toLowerCase().split(/\s+/).filter(Boolean);
-for (const r of rows) {
-const t = r.textContent.toLowerCase();
-r.style.display = terms.every(w => t.includes(w)) ? '' : 'none';
-}
-}
-q.addEventListener('input', apply);
-filterExisting();
+  function esc(s){
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  const q      = document.getElementById('q');
+  const tbody  = document.getElementById('runs-body');
+  const metaEl = document.getElementById('run-meta');
+  const tableEl= document.getElementById('runs');
+  const emptyEl= document.getElementById('empty-msg');
+  async function tryLoadTsv(){
+    const res = await fetch('manifest.tsv');
+    if (!res.ok) throw new Error();
+    const text = await res.text();
+    const lines = text.trim().split('\n');
+    const entries = [];
+    for (let i = 1; i < lines.length; i++) {
+      const p = lines[i].split('\t');
+      if (p.length < 9) continue;
+      entries.push({id:p[0],rule:p[1],width:p[2],generations:p[3],
+                    boundary:p[4],status:p[5],progress:p[6],timestamp:p[7],filename:p[8]});
+    }
+    entries.reverse();
+    tbody.innerHTML = '';
+    for (const e of entries) {
+      const tr = document.createElement('tr');
+      tr.dataset.filename = e.filename;
+      tr.innerHTML =
+        `<td>${esc(e.id)}</td><td>${esc(e.rule)}</td><td>${esc(e.width)}</td>`
+        +`<td>${esc(e.progress)}/${esc(e.generations)}</td><td>${esc(e.boundary)}</td>`
+        +`<td>${esc(e.status)}</td><td>${esc(e.timestamp)}</td>`
+        +`<td><a href="${esc(e.filename)}">open</a></td>`;
+      tbody.appendChild(tr);
+    }
+  }
+  async function run(){
+    try { await tryLoadTsv(); } catch {}
+    await Promise.all(Array.from(tbody.querySelectorAll('tr')).map(async tr => {
+      const fname = tr.dataset.filename;
+      if (!fname) { tr.remove(); return; }
+      try {
+        const res = await fetch(fname, {method:'HEAD'});
+        if (!res.ok) tr.remove();
+      } catch {}
+    }));
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const count = rows.length;
+    metaEl.textContent = count
+      + ' saved run(s). Type to filter by any column (rule, width, status, ...).';
+    tableEl.style.display = count === 0 ? 'none' : '';
+    emptyEl.style.display = count === 0 ? '' : 'none';
+    function apply(){
+      const terms = q.value.toLowerCase().split(/\s+/).filter(Boolean);
+      for (const r of rows) {
+        const t = r.textContent.toLowerCase();
+        r.style.display = terms.every(w => t.includes(w)) ? '' : 'none';
+      }
+    }
+    q.addEventListener('input', apply);
+    apply();
+  }
+  run();
 })();
 </script>
 </body></html>
