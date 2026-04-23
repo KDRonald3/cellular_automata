@@ -80,10 +80,11 @@ impl Rule {
         Rule { number, table }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn apply(&self, left: u8, center: u8, right: u8) -> u8 {
         let idx = ((left & 1) << 2) | ((center & 1) << 1) | (right & 1);
-        self.table[idx as usize]
+        // idx is 0-7 by construction; skip the bounds check.
+        unsafe { *self.table.get_unchecked(idx as usize) }
     }
 
     #[allow(dead_code)]
@@ -180,10 +181,15 @@ pub fn step_row_into(rule: &Rule, prev: &[u8], next: &mut [u8], boundary: Bounda
     let fill = boundary_fill & 1;
     match boundary {
         BoundaryMode::ZeroPadded => {
-            for i in 0..width {
-                let l = if i == 0 { fill } else { prev[i - 1] };
-                let r = if i + 1 >= width { fill } else { prev[i + 1] };
-                next[i] = rule.apply(l, prev[i], r);
+            if width == 1 {
+                next[0] = rule.apply(fill, prev[0], fill);
+            } else {
+                // Peel first and last so the inner loop has no branch per cell.
+                next[0] = rule.apply(fill, prev[0], prev[1]);
+                for i in 1..width - 1 {
+                    next[i] = rule.apply(prev[i - 1], prev[i], prev[i + 1]);
+                }
+                next[width - 1] = rule.apply(prev[width - 2], prev[width - 1], fill);
             }
         }
         BoundaryMode::Wrap => {

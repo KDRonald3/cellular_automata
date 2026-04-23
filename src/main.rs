@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use iced::mouse;
 use iced::widget::canvas::{self, Cache, Geometry, Path, Stroke};
 use iced::widget::{
-    button, column, container, pick_list, responsive, row, scrollable, text, text_input,
-    Canvas, Space,
+    button, checkbox, column, container, pick_list, responsive, row, scrollable, text,
+    text_input, Canvas, Space,
 };
 use iced::{Color, Element, Fill, Length, Rectangle, Renderer, Size, Theme};
 
@@ -127,6 +127,7 @@ enum Message {
     BoundaryChanged(BoundaryMode),
     PaddingAlignChanged(PaddingAlign),
     PaddingFillChanged(PaddingFill),
+    ShowBordersChanged(bool),
     Run,
     SelectJob(JobId),
     CancelJob(JobId),
@@ -144,6 +145,7 @@ struct App {
     boundary: BoundaryMode,
     padding_align: PaddingAlign,
     padding_fill: PaddingFill,
+    show_borders: bool,
     next_job_id: JobId,
     jobs: Vec<Job>,
     selected: Option<JobId>,
@@ -166,6 +168,7 @@ impl App {
                 boundary: BoundaryMode::ZeroPadded,
                 padding_align: PaddingAlign::Center,
                 padding_fill: PaddingFill::Zero,
+                show_borders: true,
                 next_job_id: 1,
                 jobs: Vec::new(),
                 selected: None,
@@ -185,6 +188,7 @@ impl App {
             Message::BoundaryChanged(b) => self.boundary = b,
             Message::PaddingAlignChanged(a) => self.padding_align = a,
             Message::PaddingFillChanged(f) => self.padding_fill = f,
+            Message::ShowBordersChanged(b) => self.show_borders = b,
             Message::Run => {
                 self.error = None;
                 match self.parse_params() {
@@ -257,6 +261,7 @@ impl App {
                         boundary: job.params.boundary,
                         status: &status_str,
                         rows: &rows,
+                        show_borders: self.show_borders,
                     };
                     match export::export_job(&input) {
                         Ok(path) => {
@@ -494,6 +499,9 @@ impl App {
 
         let run_button = button(text("Run")).on_press(Message::Run).padding(8);
 
+        let borders_check = checkbox("Borders", self.show_borders)
+            .on_toggle(Message::ShowBordersChanged);
+
         row![
             labeled("Initial", initial_input),
             labeled("Rule (0-255)", rule_input),
@@ -503,6 +511,7 @@ impl App {
             labeled("Boundary", boundary_pick),
             labeled("Padding", padding_pick),
             labeled("Fill", fill_pick),
+            borders_check,
             run_button,
         ]
         .spacing(12)
@@ -787,6 +796,7 @@ impl App {
             );
         }
 
+        let show_borders = self.show_borders;
         let body = responsive(move |viewport| {
             let content_w = grid_w.max(viewport.width).max(1.0);
             let content_h = total_grid_h.max(viewport.height).max(1.0);
@@ -811,6 +821,7 @@ impl App {
                     tile_idx,
                     draw_top_border: tile_idx == 0,
                     draw_bottom_border: is_last,
+                    show_borders,
                 };
                 let canvas: Element<'_, Message> = Canvas::new(prog)
                     .width(Length::Fixed(grid_w))
@@ -955,21 +966,32 @@ fn spawn_worker(
         let progress_interval = Duration::from_millis(100);
         let mut last_progress_update = Instant::now();
         let mut cancelled = false;
+        let fill = params.padding_fill.value();
+        // Check cancel/progress every N generations instead of every single one.
+        // Instant::elapsed() is a system call on Windows; batching cuts its
+        // overhead ~1000x for fast/narrow simulations with no perceptible
+        // loss of cancel responsiveness.
+        const OVERHEAD_BATCH: usize = 1024;
+        let mut overhead_countdown = OVERHEAD_BATCH;
 
         for g in 0..params.generations {
-            if cancel.load(Ordering::Relaxed) {
-                cancelled = true;
-                break;
-            }
-            step_row_into(&rule, &scratch_prev, &mut scratch_next, params.boundary, params.padding_fill.value());
+            step_row_into(&rule, &scratch_prev, &mut scratch_next, params.boundary, fill);
             flat.extend_from_slice(&scratch_next);
             std::mem::swap(&mut scratch_prev, &mut scratch_next);
 
-            if last_progress_update.elapsed() >= progress_interval {
-                let mut s = shared.lock().unwrap();
-                s.progress = g + 1;
-                drop(s);
-                last_progress_update = Instant::now();
+            overhead_countdown -= 1;
+            if overhead_countdown == 0 {
+                overhead_countdown = OVERHEAD_BATCH;
+                if cancel.load(Ordering::Relaxed) {
+                    cancelled = true;
+                    break;
+                }
+                if last_progress_update.elapsed() >= progress_interval {
+                    let mut s = shared.lock().unwrap();
+                    s.progress = g + 1;
+                    drop(s);
+                    last_progress_update = Instant::now();
+                }
             }
         }
 
@@ -1001,6 +1023,7 @@ struct TileProgram<'a> {
     tile_idx: usize,
     draw_top_border: bool,
     draw_bottom_border: bool,
+    show_borders: bool,
 }
 
 impl<'a> canvas::Program<Message> for TileProgram<'a> {
@@ -1092,26 +1115,48 @@ impl<'a> canvas::Program<Message> for TileProgram<'a> {
                 frame.stroke(&bottom, stroke.clone());
             }
 
-            for row_idx in 0..tile_rows {
-                let y = row_idx as f32 * cell;
-                let row = &tile_bytes[row_idx * width..(row_idx + 1) * width];
+            if self.show_borders && cell >= 2.0 {
+                // Fill the grid area with the border color so it shows between
+                // inset cells — no separate grid-line drawing needed.
+                frame.fill_rectangle(
+                    iced::Point::ORIGIN,
+                    Size::new(grid_w, tile_h),
+                    Color::from_rgb(0.3, 0.3, 0.3),
+                );
+                for row_idx in 0..tile_rows {
+                    let y = row_idx as f32 * cell + 1.0;
+                    let row = &tile_bytes[row_idx * width..(row_idx + 1) * width];
+                    for xi in 0..width {
+                        let color = if row[xi] == 1 { Color::BLACK } else { Color::WHITE };
+                        frame.fill_rectangle(
+                            iced::Point::new(xi as f32 * cell + 1.0, y),
+                            Size::new(cell - 1.0, cell - 1.0),
+                            color,
+                        );
+                    }
+                }
+            } else {
                 // Coalesce horizontal runs of live cells into a single fill.
-                let mut x = 0usize;
-                let n = row.len();
-                while x < n {
-                    if row[x] == 1 {
-                        let start = x;
-                        while x < n && row[x] == 1 {
+                for row_idx in 0..tile_rows {
+                    let y = row_idx as f32 * cell;
+                    let row = &tile_bytes[row_idx * width..(row_idx + 1) * width];
+                    let mut x = 0usize;
+                    let n = row.len();
+                    while x < n {
+                        if row[x] == 1 {
+                            let start = x;
+                            while x < n && row[x] == 1 {
+                                x += 1;
+                            }
+                            let run_len = x - start;
+                            frame.fill_rectangle(
+                                iced::Point::new(start as f32 * cell, y),
+                                Size::new(run_len as f32 * cell, cell),
+                                Color::BLACK,
+                            );
+                        } else {
                             x += 1;
                         }
-                        let run_len = x - start;
-                        frame.fill_rectangle(
-                            iced::Point::new(start as f32 * cell, y),
-                            Size::new(run_len as f32 * cell, cell),
-                            Color::BLACK,
-                        );
-                    } else {
-                        x += 1;
                     }
                 }
             }

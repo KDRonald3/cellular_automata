@@ -28,6 +28,7 @@ pub struct ExportInput<'a> {
     pub status: &'a str,
     /// Flat row-major grid: cell (y, x) lives at `rows[y * width + x]`.
     pub rows: &'a [u8],
+    pub show_borders: bool,
 }
 
 pub fn export_job(input: &ExportInput) -> io::Result<PathBuf> {
@@ -64,12 +65,21 @@ fn render_run_html(input: &ExportInput, exported_at: &str) -> String {
     let height = if width == 0 { 0 } else { rows.len() / width };
     // Full-fidelity HTML preview: slice into stacked canvases so each stays
     // within safe dimensions while retaining stride == 1.
+    // Export cell size: scale so the canvas lands near 1600px wide, matching
+    // the in-app default view. Capped at 16 to prevent absurdly large canvases
+    // for very narrow automata. cs=1 means no grid lines (large automata).
+    let cs = (1600usize / width.max(1)).clamp(1, 16);
+
     let tile_max_rows_by_cells = if width == 0 {
         1
     } else {
         (MAX_EXPORT_CELLS / width).max(1)
     };
-    let tile_max_rows = tile_max_rows_by_cells.min(MAX_EXPORT_HEIGHT).max(1);
+    // When cs > 1 each row is cs pixels tall, so cap tile height in rows
+    // so the canvas height stays within MAX_EXPORT_HEIGHT pixels.
+    let tile_max_rows = tile_max_rows_by_cells
+        .min(MAX_EXPORT_HEIGHT / cs.max(1))
+        .max(1);
     let num_tiles = if height == 0 {
         0
     } else {
@@ -127,8 +137,16 @@ fn render_run_html(input: &ExportInput, exported_at: &str) -> String {
            <dt>exported</dt><dd>{}</dd>\n\
            <dt>preview</dt><dd>{}</dd>\n\
          </dl>\n\
+         <div style=\"margin:8px 0 4px 0;display:flex;align-items:center;gap:16px;font-size:13px;\">\n\
+           <label style=\"display:flex;align-items:center;gap:6px;\">Cell size\n\
+             <input id=\"cs-range\" type=\"range\" min=\"1\" max=\"16\" style=\"width:120px;vertical-align:middle;\">\n\
+             <input id=\"cs-num\" type=\"number\" min=\"1\" max=\"64\" style=\"width:44px;padding:2px 4px;font-size:13px;\">px\n\
+           </label>\n\
+           <label style=\"display:flex;align-items:center;gap:4px;\"><input id=\"b-check\" type=\"checkbox\"> Borders</label>\n\
+         </div>\n\
+         <div id=\"tile-note\" style=\"font-size:12px;color:#555;margin-top:2px;\"></div>\n\
          <div id=\"tiles\"></div>\n\
-         <script id=\"meta\" type=\"application/json\">{{\"w\":{},\"h\":{},\"tiles\":[{}]}}</script>\n\
+         <script id=\"meta\" type=\"application/json\">{{\"w\":{},\"h\":{},\"cs\":{},\"borders\":{},\"tiles\":[{}]}}</script>\n\
          {}",
         html_escape(&title),
         html_escape(&title),
@@ -150,55 +168,103 @@ fn render_run_html(input: &ExportInput, exported_at: &str) -> String {
         },
         width.max(1),
         height.max(1),
+        cs,
+        input.show_borders,
         tiles_meta_json,
         tile_scripts,
     ));
     html.push_str(
-         "<script>\n\
-         (function(){\n\
+        "<script>\n\
+        (function(){\n\
           const meta = JSON.parse(document.getElementById('meta').textContent);\n\
           if (!meta || meta.w === 0 || meta.h === 0) return;\n\
-          const host = document.getElementById('tiles');\n\
-          let firstTile = true;\n\
-          for (const tile of meta.tiles || []) {\n\
-            const b64 = (document.getElementById(tile.id)?.textContent || '').trim();\n\
-            if (!b64) continue;\n\
-            const bin = atob(b64);\n\
-            const tileH = Math.max(0, (tile.end || 0) - (tile.start || 0));\n\
-            if (tileH === 0) continue;\n\
-            const cv = document.createElement('canvas');\n\
-            cv.width = meta.w;\n\
-            cv.height = tileH;\n\
-            cv.style.imageRendering = 'pixelated';\n\
-            cv.style.imageRendering = 'crisp-edges';\n\
-            cv.style.display = 'block';\n\
-            cv.style.marginTop = firstTile ? '12px' : '0';\n\
-            cv.style.border = 'none';\n\
-            firstTile = false;\n\
-            const ctx = cv.getContext('2d');\n\
-            const img = ctx.createImageData(meta.w, tileH);\n\
-            for (let y = 0; y < tileH; y++) {\n\
-              for (let x = 0; x < meta.w; x++) {\n\
-                const iPacked = y * meta.w + x;\n\
-                const bit = (bin.charCodeAt(iPacked >> 3) >> (7 - (iPacked & 7))) & 1;\n\
-                const p   = iPacked * 4;\n\
-                const v   = bit ? 0 : 255;\n\
-                img.data[p] = v; img.data[p+1] = v; img.data[p+2] = v; img.data[p+3] = 255;\n\
+          const host   = document.getElementById('tiles');\n\
+          const noteEl = document.getElementById('tile-note');\n\
+          const tiles  = (meta.tiles || []).map(t => {\n\
+            const b64 = (document.getElementById(t.id)?.textContent || '').trim();\n\
+            if (!b64) return null;\n\
+            return { bin: atob(b64), tileH: Math.max(0, (t.end||0)-(t.start||0)) };\n\
+          }).filter(t => t && t.tileH > 0);\n\
+          let curCs      = meta.cs || 1;\n\
+          let curBorders = !!meta.borders;\n\
+          function render(cs, borders) {\n\
+            host.innerHTML = '';\n\
+            let first = true;\n\
+            for (const { bin, tileH } of tiles) {\n\
+              const cv  = document.createElement('canvas');\n\
+              cv.width  = meta.w * cs;\n\
+              cv.height = tileH  * cs;\n\
+              cv.style.display   = 'block';\n\
+              cv.style.marginTop = first ? '12px' : '0';\n\
+              cv.style.border    = 'none';\n\
+              first = false;\n\
+              const ctx = cv.getContext('2d');\n\
+              if (cs === 1) {\n\
+                cv.style.imageRendering = 'pixelated';\n\
+                cv.style.imageRendering = 'crisp-edges';\n\
+                const img = ctx.createImageData(meta.w, tileH);\n\
+                for (let y = 0; y < tileH; y++) {\n\
+                  for (let x = 0; x < meta.w; x++) {\n\
+                    const i = y * meta.w + x;\n\
+                    const bit = (bin.charCodeAt(i >> 3) >> (7 - (i & 7))) & 1;\n\
+                    const p = i * 4, v = bit ? 0 : 255;\n\
+                    img.data[p]=v; img.data[p+1]=v; img.data[p+2]=v; img.data[p+3]=255;\n\
+                  }\n\
+                }\n\
+                ctx.putImageData(img, 0, 0);\n\
+              } else {\n\
+                cv.style.width    = cv.width  + 'px';\n\
+                cv.style.height   = cv.height + 'px';\n\
+                cv.style.maxWidth = 'none';\n\
+                if (borders) {\n\
+                  ctx.fillStyle = '#4d4d4d';\n\
+                  ctx.fillRect(0, 0, cv.width, cv.height);\n\
+                  for (let y = 0; y < tileH; y++) {\n\
+                    for (let x = 0; x < meta.w; x++) {\n\
+                      const i = y * meta.w + x;\n\
+                      const bit = (bin.charCodeAt(i >> 3) >> (7 - (i & 7))) & 1;\n\
+                      ctx.fillStyle = bit ? '#000000' : '#ffffff';\n\
+                      ctx.fillRect(x*cs+1, y*cs+1, cs-1, cs-1);\n\
+                    }\n\
+                  }\n\
+                } else {\n\
+                  ctx.fillStyle = '#ffffff';\n\
+                  ctx.fillRect(0, 0, cv.width, cv.height);\n\
+                  ctx.fillStyle = '#000000';\n\
+                  for (let y = 0; y < tileH; y++) {\n\
+                    for (let x = 0; x < meta.w; x++) {\n\
+                      const i = y * meta.w + x;\n\
+                      const bit = (bin.charCodeAt(i >> 3) >> (7 - (i & 7))) & 1;\n\
+                      if (bit) ctx.fillRect(x*cs, y*cs, cs, cs);\n\
+                    }\n\
+                  }\n\
+                }\n\
               }\n\
+              host.appendChild(cv);\n\
             }\n\
-            ctx.putImageData(img, 0, 0);\n\
-            host.appendChild(cv);\n\
+            noteEl.textContent = tiles.length > 1\n\
+              ? 'Rendered ' + tiles.length + ' stacked canvases (full fidelity, stride 1).'\n\
+              : '';\n\
           }\n\
-          if ((meta.tiles || []).length > 1) {\n\
-            const note = document.createElement('p');\n\
-            note.style.fontSize = '12px';\n\
-            note.style.color = '#555';\n\
-            note.textContent = `Rendered ${meta.tiles.length} stacked canvases (full fidelity, stride 1).`;\n\
-            host.insertAdjacentElement('beforebegin', note);\n\
+          const csRange = document.getElementById('cs-range');\n\
+          const csNum   = document.getElementById('cs-num');\n\
+          const bCheck  = document.getElementById('b-check');\n\
+          csRange.value  = curCs;\n\
+          csNum.value    = curCs;\n\
+          bCheck.checked = curBorders;\n\
+          function applyCs(v) {\n\
+            curCs = Math.max(1, parseInt(v) || 1);\n\
+            csRange.value = Math.min(curCs, 16);\n\
+            csNum.value   = curCs;\n\
+            render(curCs, curBorders);\n\
           }\n\
-         })();\n\
-         </script>\n\
-         </body></html>\n",
+          csRange.addEventListener('input',  () => applyCs(csRange.value));\n\
+          csNum.addEventListener('change',   () => applyCs(csNum.value));\n\
+          bCheck.addEventListener('change',  () => { curBorders = bCheck.checked; render(curCs, curBorders); });\n\
+          render(curCs, curBorders);\n\
+        })();\n\
+        </script>\n\
+        </body></html>\n",
     );
 
     html
