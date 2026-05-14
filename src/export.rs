@@ -15,10 +15,8 @@ const MAX_EXPORT_HEIGHT: usize = 32_000; // per-canvas height cap
 
 const MANIFEST_FILE: &str = "manifest.tsv";
 const INDEX_FILE: &str = "index.html";
-// Relative path so exports work on any OS and checkout location.
-const DATA_DIR: &str = "runs";
 
-pub struct ExportInput<'a> {
+pub(crate) struct ExportInput<'a> {
     pub job_id: u64,
     pub rule: u8,
     pub width: usize,
@@ -31,9 +29,8 @@ pub struct ExportInput<'a> {
     pub show_borders: bool,
 }
 
-pub fn export_job(input: &ExportInput) -> io::Result<PathBuf> {
-    let dir = runs_dir()?;
-    fs::create_dir_all(&dir)?;
+pub(crate) fn export_job(input: &ExportInput, dir: &Path) -> io::Result<PathBuf> {
+    fs::create_dir_all(dir)?;
 
     let now = chrono::Local::now();
     let ts_file = now.format("%Y%m%d_%H%M%S").to_string();
@@ -53,8 +50,8 @@ pub fn export_job(input: &ExportInput) -> io::Result<PathBuf> {
     let html = render_run_html(input, &ts_human);
     fs::write(&path, html)?;
 
-    append_manifest(&dir, input, &ts_human, &filename)?;
-    regenerate_index(&dir)?;
+    append_manifest(dir, input, &ts_human, &filename)?;
+    regenerate_index(dir)?;
 
     Ok(path)
 }
@@ -538,8 +535,3 @@ fn html_escape(s: &str) -> String {
     out
 }
 
-fn runs_dir() -> io::Result<PathBuf> {
-    // Save exports into a repo-local `runs/` folder so the app works
-    // cross-platform and regardless of absolute install path.
-    Ok(std::env::current_dir()?.join(DATA_DIR))
-}
